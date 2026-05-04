@@ -1,0 +1,46 @@
+=== Warming up ===
+
+=== [1] 低并发 100 连接 ===
+Running 15s test @ http://127.0.0.1:8080/products
+  4 threads and 100 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     1.88ms  525.31us  13.98ms   62.07%
+    Req/Sec     9.58k     3.71k   17.00k    63.00%
+  Latency Distribution
+     50%    1.76ms
+     75%    2.36ms
+     90%    2.54ms
+     99%    2.99ms
+  572128 requests in 15.00s, 227.53MB read
+Requests/sec:  38136.17
+Transfer/sec:     15.17MB
+
+=== [2] 中并发 500 连接 ===
+Running 15s test @ http://127.0.0.1:8080/products
+  4 threads and 500 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     4.93ms    1.31ms  33.22ms   59.73%
+    Req/Sec     9.22k     2.42k   17.69k    70.50%
+  Latency Distribution
+     50%    5.02ms
+     75%    6.03ms
+     90%    6.50ms
+     99%    7.69ms
+  550089 requests in 15.04s, 218.76MB read
+Requests/sec:  36570.11
+Transfer/sec:     14.54MB
+
+=== [3] 高并发 1000 连接 ===
+Running 15s test @ http://127.0.0.1:8080/products
+  4 threads and 1000 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    11.14ms    3.75ms 120.17ms   83.82%
+    Req/Sec     9.68k     1.39k   14.57k    70.00%
+  Latency Distribution
+     50%   10.93ms
+     75%   13.91ms
+     90%   15.08ms
+     99%   16.93ms
+  577703 requests in 15.06s, 229.74MB read
+Requests/sec:  38355.04
+Transfer/sec:     15.25MB

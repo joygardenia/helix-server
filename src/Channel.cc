@@ -3,104 +3,66 @@
 #include <Channel.h>
 #include <EventLoop.h>
 #include <Logger.h>
+const int Channel::kNoneEvent = 0;
+const int Channel::kReadEvent = EPOLLIN | EPOLLPRI;
+const int Channel::kWriteEvent = EPOLLOUT;
 
-const int Channel::kNoneEvent = 0; //空事件
-const int Channel::kReadEvent = EPOLLIN | EPOLLPRI; //读事件
-const int Channel::kWriteEvent = EPOLLOUT; //写事件
-
-// EventLoop: ChannelList Poller
 Channel::Channel(EventLoop *loop, int fd)
-    : loop_(loop)
-    , fd_(fd)
-    , events_(0)
-    , revents_(0)
-    , index_(-1)
-    , tied_(false)
-{
+    : loop_(loop), fd_(fd), events_(0), revents_(0), tied_(false), index_(-1) {}
+Channel::~Channel() {}
+void Channel::remove() { loop_->removeChannel(this); }
+void Channel::update() { loop_->updateChannel(this); }
+// tie() 只在 TcpConnection 建立时调用，专门解决连接被用户提前关闭的问题。
+void Channel::tie(const std::shared_ptr<void> &obj) {
+  tie_ = obj;
+  tied_ = true;
 }
+void Channel::handleEvent(Timestamp receiveTime) {
+  if (tied_) {
 
-Channel::~Channel()
-{
-}
+    std::shared_ptr<void> guard =
+        tie_.lock(); // tie_.lock() 把 weak_ptr 提升成 shared_ptr，只要 guard
+                     // 活着，TcpConnection 就不会被销毁 用 void 是因为 Channel
+                     // 不想依赖 TcpConnection 的具体类型，保持解耦
+                     //  guard 活着 → TcpConnection 引用计数+1 →
+                     //  回调执行期间不会被销毁 回调结束 → guard 析构 →
+                     //  引用计数-1
+    if (guard) {
+      handleEventWithGuard(receiveTime);
+    }
 
-// channel的tie方法什么时候调用过?  TcpConnection => channel
-/**
- * TcpConnection中注册了Channel对应的回调函数，传入的回调函数均为TcpConnection
- * 对象的成员方法，因此可以说明一点就是：Channel的结束一定晚于TcpConnection对象！
- * 此处用tie去解决TcpConnection和Channel的生命周期时长问题，从而保证了Channel对象能够在
- * TcpConnection销毁前销毁。
- **/
-void Channel::tie(const std::shared_ptr<void> &obj)
-{
-    tie_ = obj;
-    tied_ = true;
+  } else {
+    // tied_ 为 false 说明这个 Channel 没有绑定 TcpConnection,
+    // 生命周期由其他机制管理，不需要通过 weak_ptr 检查，可以直接执行回调
+    handleEventWithGuard(receiveTime);
+  }
 }
-//update 和remove => EpollPoller 更新channel在poller中的状态
-/**
- * 当改变channel所表示的fd的events事件后，update负责再poller里面更改fd相应的事件epoll_ctl
- **/
-void Channel::update()
-{
-    // 通过channel所属的eventloop，调用poller的相应方法，注册fd的events事件
-    loop_->updateChannel(this);
-}
-
-// 在channel所属的EventLoop中把当前的channel删除掉
-void Channel::remove()
-{
-    loop_->removeChannel(this);
-}
-
-void Channel::handleEvent(Timestamp receiveTime)
-{
-    if (tied_)
-    {
-        std::shared_ptr<void> guard = tie_.lock();
-        if (guard)
-        {
-            handleEventWithGuard(receiveTime);
-        }
-        // 如果提升失败了 就不做任何处理 说明Channel的TcpConnection对象已经不存在了
+void Channel::handleEventWithGuard(Timestamp receiveTime) {
+  // EPOLLHUP 表示连接挂断（对端关闭），EPOLLIN 表示还有数据可读
+  if ((revents_ & EPOLLHUP) && !(revents_ & EPOLLIN)) {
+    if (closeCallback_) { // TODO  ❌ 回调为空时直接调用会崩溃
+      closeCallback_();
     }
-    else
-    {
-        handleEventWithGuard(receiveTime);
+  }
+  if (revents_ & EPOLLOUT) {
+    if (writeCallback_) {
+      writeCallback_();
     }
-}
-
-void Channel::handleEventWithGuard(Timestamp receiveTime)
-{
-    LOG_INFO<<"channel handleEvent revents:"<<revents_;
-    // 关闭
-    if ((revents_ & EPOLLHUP) && !(revents_ & EPOLLIN)) // 当TcpConnection对应Channel 通过shutdown 关闭写端 epoll触发EPOLLHUP
-    {
-        if (closeCallback_)
-        {
-            closeCallback_();
-        }
+  }
+  if (revents_ & EPOLLOUT) {
+    if (writeCallback_) {
+      writeCallback_();
     }
-    // 错误
-    if (revents_ & EPOLLERR)
-    {
-        if (errorCallback_)
-        {
-            errorCallback_();
-        }
+  }
+  if (revents_ & EPOLLERR) {
+    if (errorCallback_) {
+      errorCallback_();
     }
-    // 读
-    if (revents_ & (EPOLLIN | EPOLLPRI))
-    {
-        if (readCallback_)
-        {
-            readCallback_(receiveTime);
-        }
+  }
+  if ((revents_ & (EPOLLPRI | EPOLLIN))) { //! const int Channel::kReadEvent =
+                                           //! EPOLLIN | EPOLLPRI;整体与
+    if (readCallback_) {
+      readCallback_(receiveTime);
     }
-    // 写
-    if (revents_ & EPOLLOUT)
-    {
-        if (writeCallback_)
-        {
-            writeCallback_();
-        }
-    }
+  }
 }

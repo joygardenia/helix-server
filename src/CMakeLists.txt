@@ -10,5 +10,6 @@ add_library(src_lib SHARED ${SRC_FILE})
 add_executable(main  main.cc)
 
 #链接必要的库
-target_link_libraries(main src_lib memory_lib log_lib ${LIBS})
+target_link_libraries(src_lib uring)
+target_link_libraries(main src_lib memory_lib log_lib ${LIBS} mariadb)
 

@@ -1,33 +1,29 @@
 #pragma once
 
+#include <condition_variable>
 #include <functional>
 #include <mutex>
-#include <condition_variable>
 #include <string>
 
-#include "noncopyable.h"
 #include "Thread.h"
+#include "noncopyable.h"
 
 class EventLoop;
-
-class EventLoopThread : noncopyable
-{
+class EventLoopThread : noncopyable {
 public:
-    using ThreadInitCallback = std::function<void(EventLoop *)>;
-
-    EventLoopThread(const ThreadInitCallback &cb = ThreadInitCallback(),
-                    const std::string &name = std::string());
-    ~EventLoopThread();
-
-    EventLoop *startLoop();
+  using ThreadInitCallback = std::function<void(EventLoop *)>;
+  EventLoopThread(const ThreadInitCallback &cb = ThreadInitCallback(),
+                  const std::string &name = std::string());
+  ~EventLoopThread();
+  EventLoop *startLoop();
 
 private:
-    void threadFunc();
-
-    EventLoop *loop_;
-    bool exiting_;
-    Thread thread_;
-    std::mutex mutex_;             // 互斥锁
-    std::condition_variable cond_; // 条件变量
-    ThreadInitCallback callback_;
+  void threadFunc();
+  EventLoop *loop_;
+  bool exiting_; // true :
+                 // 表示对象处于销毁状态，防止析构期间其他操作误用这个对象。
+  Thread thread_;
+  std::mutex mutex_;
+  std::condition_variable cond_;
+  ThreadInitCallback callback_;
 };

@@ -1,16 +1,13 @@
 #include <stdlib.h>
 
-#include <Poller.h>
 #include <EPollPoller.h>
+#include <IoUringPoller.h>
+#include <Poller.h>
 
-Poller *Poller::newDefaultPoller(EventLoop *loop)
-{
-    if (::getenv("MUDUO_USE_POLL"))
-    {
-        return nullptr; // 生成poll的实例
-    }
-    else
-    {
-        return new EPollPoller(loop); // 生成epoll的实例
-    }
+Poller *Poller::newDefaultPoller(EventLoop *loop) {
+  if (::getenv("USE_IOURING")) {
+    return new IoUringPoller(loop);
+  } else {
+    return new EPollPoller(loop);
+  }
 }

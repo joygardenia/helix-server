@@ -1,18 +1,18 @@
 #pragma once
 
-#include <memory>
 #include <functional>
+#include <memory>
 
 class Buffer;
 class TcpConnection;
 class Timestamp;
 
-using TcpConnectionPtr = std::shared_ptr<TcpConnection>;
+using TcpConnectionPtr = std::shared_ptr<TcpConnection>; //! shared_ptr
 using ConnectionCallback = std::function<void(const TcpConnectionPtr &)>;
 using CloseCallback = std::function<void(const TcpConnectionPtr &)>;
 using WriteCompleteCallback = std::function<void(const TcpConnectionPtr &)>;
-using HighWaterMarkCallback = std::function<void(const TcpConnectionPtr &, size_t)>;
-
-using MessageCallback = std::function<void(const TcpConnectionPtr &,
-                                           Buffer *,
-                                           Timestamp)>;
+// 高水位回调，流量控制
+using HighWaterMarkCallback =
+    std::function<void(const TcpConnectionPtr &, size_t)>;
+using MessageCallback =
+    std::function<void(const TcpConnectionPtr &, Buffer *, Timestamp)>;

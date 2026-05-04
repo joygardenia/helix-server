@@ -138,7 +138,20 @@ public:
       return value;
     }
 
-      // 清空缓存,回收资源
+    // 删除单个 key（缓存失效用）
+    void remove(Key key)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = nodeMap_.find(key);
+        if (it == nodeMap_.end()) return;
+        NodePtr node = it->second;
+        removeFromFreqList(node);
+        decreaseFreqNum(node->freq);
+        nodeMap_.erase(it);
+        updateMinFreq();
+    }
+
+    // 清空缓存,回收资源
     void purge()
     {
       nodeMap_.clear();

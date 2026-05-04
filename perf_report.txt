@@ -1,0 +1,80 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 43K of event 'cpu_atom/cycles/P'
+# Event count (approx.): 11208957147
+#
+# Overhead  Command  Shared Object         Symbol                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
+# ........  .......  ....................  ........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................
+#
+     8.85%  main     libc.so.6             [.] 0x000000000016dad3
+            |          
+             --8.84%--0x7fd49b76dad5
+                       TcpConnection::handleRead(Timestamp)
+                       void std::__invoke_impl<void, void (TcpConnection::*&)(Timestamp), TcpConnection*&, Timestamp>(std::__invoke_memfun_deref, void (TcpConnection::*&)(Timestamp), TcpConnection*&, Timestamp&&)
+                       std::__invoke_result<void (TcpConnection::*&)(Timestamp), TcpConnection*&, Timestamp>::type std::__invoke<void (TcpConnection::*&)(Timestamp), TcpConnection*&, Timestamp>(void (TcpConnection::*&)(Timestamp), TcpConnection*&, Timestamp&&)
+                       void std::_Bind<void (TcpConnection::*(TcpConnection*, std::_Placeholder<1>))(Timestamp)>::__call<void, Timestamp&&, 0ul, 1ul>(std::tuple<Timestamp&&>&&, std::_Index_tuple<0ul, 1ul>)
+                       void std::_Bind<void (TcpConnection::*(TcpConnection*, std::_Placeholder<1>))(Timestamp)>::operator()<Timestamp, void>(Timestamp&&)
+                       void std::__invoke_impl<void, std::_Bind<void (TcpConnection::*(TcpConnection*, std::_Placeholder<1>))(Timestamp)>&, Timestamp>(std::__invoke_other, std::_Bind<void (TcpConnection::*(TcpConnection*, std::_Placeholder<1>))(Timestamp)>&, Timestamp&&)
+                       std::enable_if<std::is_void<void>::value, void>::type std::__invoke_r<void, std::_Bind<void (TcpConnection::*(TcpConnection*, std::_Placeholder<1>))(Timestamp)>&, Timestamp>(std::_Bind<void (TcpConnection::*(TcpConnection*, std::_Placeholder<1>))(Timestamp)>&, Timestamp&&)
+                       std::_Function_handler<void (Timestamp), std::_Bind<void (TcpConnection::*(TcpConnection*, std::_Placeholder<1>))(Timestamp)> >::_M_invoke(std::_Any_data const&, Timestamp&&)
+                       std::function<void (Timestamp)>::operator()(Timestamp) const
+                       Channel::handleEventWithGuard(Timestamp)
+                       Channel::handleEvent(Timestamp)
+                       EventLoop::loop()
+                       EventLoopThread::threadFunc()
+                       void std::__invoke_impl<void, void (EventLoopThread::*&)(), EventLoopThread*&>(std::__invoke_memfun_deref, void (EventLoopThread::*&)(), EventLoopThread*&)
+                       std::__invoke_result<void (EventLoopThread::*&)(), EventLoopThread*&>::type std::__invoke<void (EventLoopThread::*&)(), EventLoopThread*&>(void (EventLoopThread::*&)(), EventLoopThread*&)
+                       void std::_Bind<void (EventLoopThread::*(EventLoopThread*))()>::__call<void, , 0ul>(std::tuple<>&&, std::_Index_tuple<0ul>)
+                       void std::_Bind<void (EventLoopThread::*(EventLoopThread*))()>::operator()<, void>()
+                       void std::__invoke_impl<void, std::_Bind<void (EventLoopThread::*(EventLoopThread*))()>&>(std::__invoke_other, std::_Bind<void (EventLoopThread::*(EventLoopThread*))()>&)
+                       std::enable_if<std::is_void<void>::value, void>::type std::__invoke_r<void, std::_Bind<void (EventLoopThread::*(EventLoopThread*))()>&>(std::_Bind<void (EventLoopThread::*(EventLoopThread*))()>&)
+                       std::_Function_handler<void (), std::_Bind<void (EventLoopThread::*(EventLoopThread*))()> >::_M_invoke(std::_Any_data const&)
+                       std::function<void ()>::operator()() const
+                       Thread::start()::{lambda()#1}::operator()() const
+                       void std::__invoke_impl<void, Thread::start()::{lambda()#1}>(std::__invoke_other, Thread::start()::{lambda()#1}&&)
+                       std::__invoke_result<Thread::start()::{lambda()#1}>::type std::__invoke<Thread::start()::{lambda()#1}>(Thread::start()::{lambda()#1}&&)
+                       void std::thread::_Invoker<std::tuple<Thread::start()::{lambda()#1}> >::_M_invoke<0ul>(std::_Index_tuple<0ul>)
+                       std::thread::_Invoker<std::tuple<Thread::start()::{lambda()#1}> >::operator()()
+                       std::thread::_State_impl<std::thread::_Invoker<std::tuple<Thread::start()::{lambda()#1}> > >::_M_run()
+                       execute_native_thread_routine
+                       0x7fd49b69698b
+                       0x7fd49b71a9cc
+
+     2.57%  main     [kernel.kallsyms]     [k] entry_SYSRETQ_unsafe_stack
+            |          
+             --2.14%--entry_SYSRETQ_unsafe_stack
+                       |          
+                        --1.15%--0x7fd49b69f002
+                                  0x7fd49b6931b4
+                                  |          
+                                   --0.79%--write
+
+     1.68%  main     [kernel.kallsyms]     [k] _raw_spin_lock_irqsave
+            |          
+             --1.68%--_raw_spin_lock_irqsave
+
+     1.24%  main     [kernel.kallsyms]     [k] n_tty_write
+            |          
+             --1.22%--n_tty_write
+                       file_tty_write.isra.0
+                       vfs_write
+                       ksys_write
+                       do_syscall_64
+                       entry_SYSCALL_64_after_hwframe
+                       0x7fd49b69f002
+                       0x7fd49b6931b4
+                       write
+                       _IO_file_write
+                       0x7fd49b68c976
+                       _IO_do_write
+                       _IO_file_xsputn
+                       _IO_fwrite
+                       asyncLog(char const*, int)
+                       void std::__invoke_impl<void, void (*&)(char const*, int), char const*, int>(std::__invoke_other, void (*&)(char const*, int), char const*&&, int&&)
+                       std::enable_if<std::is_void<void>::value, void>::type std::__invoke_r<void, void (*&)(char const*, int), char const*, int>(void (*&)(char const*, int), char const*&&, int&&)
+                       std::_Function_handler<void (char const*, int), void (*)(char const*, int)>::_M_invoke(std::_Any_data const&, char const*&&, int&&)
+                       std::function<void (char const*, int)>::operator()(char const*, int) const
+                       Logger::~Logger()
