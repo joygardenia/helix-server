@@ -15,8 +15,8 @@ static const off_t kRollSize = 1 * 1024 * 1024;
 
 // ─── 全局资源 ────────────────────────────────────────────────────────────────
 static DBPool *g_dbPool = nullptr;
-// LFU：key=路由字符串, value=响应 body（读多写少的物品目录）
-static KamaCache::KLfuCache<std::string, std::string> *g_cache = nullptr;
+// LFU 分片缓存：key=路由字符串, value=响应 body（读多写少的物品目录）
+static KamaCache::KHashLfuCache<std::string, std::string> *g_cache = nullptr;
 
 static EtcdClient *g_etcd = nullptr;
 static ConsistentHash *g_hashRing = nullptr;
@@ -283,6 +283,7 @@ public:
         std::bind(&EchoServer::onMessage, this, std::placeholders::_1,
                   std::placeholders::_2, std::placeholders::_3));
     server_.setThreadNum(3);
+    server_.setIdleSeconds(60);
   }
   void start() { server_.start(); }
 
@@ -361,7 +362,7 @@ int main(int argc, char *argv[]) {
 
   memoryPool::HashBucket::initMemoryPool();
 
-  KamaCache::KLfuCache<std::string, std::string> lfu(128);
+  KamaCache::KHashLfuCache<std::string, std::string> lfu(128, 8);
   g_cache = &lfu;
 
   ConsistentHash hashRing(100);

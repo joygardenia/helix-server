@@ -47,6 +47,7 @@ public:
     highWaterMarkCallback_ = cb;
     highWaterMark_ = highWaterMark;
   }
+  void setIdleSeconds(int seconds) { idleSeconds_ = seconds; }
 
   // 连接建立
   void connectEstablished();
@@ -60,6 +61,8 @@ private:
   void handleWrite();
   void handleClose();
   void handleError();
+  void resetIdleTimer();
+  void onIdleTimeout();
   void sendInLoop(const void *data, size_t count);
   void shutdownInLoop();
   void sendFileInLoop(int FileDescriptor, off_t offset, size_t count);
@@ -77,6 +80,8 @@ private:
   HighWaterMarkCallback highWaterMarkCallback_;
   CloseCallback closeCallback_;
   size_t highWaterMark_;
+  int idleSeconds_;
+  Timestamp lastRecvTime_;
   Buffer inputBuffer_;
   Buffer outputBuffer_;
 };

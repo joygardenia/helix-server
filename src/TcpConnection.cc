@@ -29,7 +29,8 @@ TcpConnection::TcpConnection(EventLoop *loop, const std::string &nameArg,
     : loop_(CheckLoopNotNull(loop)), name_(nameArg), state_(kConnecting),
       reading_(true), socket_(new Socket(sockfd)),
       channel_(new Channel(loop, sockfd)), localAddr_(localAddr),
-      peerAddr_(peerAddr), highWaterMark_(64 * 1024 * 1024) {
+      peerAddr_(peerAddr), highWaterMark_(64 * 1024 * 1024),
+      idleSeconds_(0), lastRecvTime_() {
   channel_->setReadCallback(
       std::bind(&TcpConnection::handleRead, this, std::placeholders::_1));
   channel_->setWriteCallback(std::bind(&TcpConnection::handleWrite, this));
@@ -48,6 +49,9 @@ void TcpConnection::connectEstablished() {
   channel_->tie(shared_from_this());
   channel_->enableReading();
   connectionCallback_(shared_from_this());
+  if (idleSeconds_ > 0) {
+    resetIdleTimer();
+  }
 }
 void TcpConnection::connectDestroyed() {
   if (state_ == kConnected) {
@@ -65,6 +69,9 @@ void TcpConnection::handleRead(Timestamp receiveTime) {
   if (readn > 0) {
     // 第二步：数据到手了，才调业务回调
     messageCallback_(shared_from_this(), &inputBuffer_, receiveTime);
+    if (idleSeconds_ > 0) {
+      resetIdleTimer();
+    }
   } else if (readn == 0) {
     handleClose();
   } else {
@@ -78,6 +85,9 @@ void TcpConnection::handleWrite() {
     int savedErrno = 0;
     size_t writen = outputBuffer_.writeFd(channel_->fd(), &savedErrno);
     if (writen > 0) {
+      if (idleSeconds_ > 0) {
+        resetIdleTimer();
+      }
       if (outputBuffer_.readableBytes() == 0) {
         channel_->disableWriting();
         if (writeCompleteCallback_) {
@@ -118,6 +128,28 @@ void TcpConnection::handleError() {
   }
   LOG_ERROR << "TcpConnection::handleError name:" << name_
             << " SO_ERROR:" << err;
+}
+
+void TcpConnection::resetIdleTimer() {
+  // ioLoop 线程执行：刷新活跃时间，投递 idleSeconds_ 后到期的一次性定时器
+  lastRecvTime_ = Timestamp::now();
+  std::weak_ptr<TcpConnection> weak(shared_from_this());
+  loop_->runAfter(idleSeconds_, [weak]() {
+    if (auto conn = weak.lock()) {
+      conn->onIdleTimeout();
+    }
+  });
+}
+
+void TcpConnection::onIdleTimeout() {
+  // 期间有新活跃时旧定时器残留到期，lastRecvTime_ 已刷新，条件不成立
+  Timestamp now = Timestamp::now();
+  if (now.microSecondsSinceEpoch() - lastRecvTime_.microSecondsSinceEpoch() >=
+      static_cast<int64_t>(idleSeconds_) * Timestamp::kMicroSecondsPerSecond) {
+    LOG_INFO << "TcpConnection::onIdleTimeout fd=" << channel_->fd()
+             << " idle " << idleSeconds_ << "s, force close";
+    handleClose();
+  }
 }
 
 void TcpConnection::send(const std::string &buf) {

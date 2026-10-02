@@ -38,6 +38,7 @@ public:
   void setWriteCompleteCallback(const WriteCompleteCallback &cb) {
     writeCompleteCallback_ = cb;
   }
+  void setIdleSeconds(int seconds) { idleSeconds_ = seconds; }
   void setThreadNum(int numThreads);
   void start();
 
@@ -56,6 +57,7 @@ private:
   WriteCompleteCallback writeCompleteCallback_;
   ThreadInitCallback threadInitCallback_;
   int numThreads_;
+  int idleSeconds_;
   std::atomic_int started_;
   int nextConnId_;
   ConnectionMap connections_;

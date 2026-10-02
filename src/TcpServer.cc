@@ -24,9 +24,9 @@ static EventLoop *CheckLoopNotNull(EventLoop *loop) {
 TcpServer::TcpServer(EventLoop *loop, const InetAddress &listenAddr,
                      const std::string &nameArg, Option option)
     : loop_(loop), ipPort_(listenAddr.toIpPort()), name_(nameArg),
-      acceptor_(new Acceptor(loop, listenAddr, option = kReusePort)),
+      acceptor_(new Acceptor(loop, listenAddr, option == kReusePort)),
       threadPool_(new EventLoopThreadPool(loop, nameArg)), started_(0),
-      nextConnId_(1) {
+      nextConnId_(1), idleSeconds_(0) {
   acceptor_->setNewConnectionCallback(std::bind(&TcpServer::newConnection, this,
                                                 std::placeholders::_1,
                                                 std::placeholders::_2));
@@ -84,6 +84,7 @@ void TcpServer::newConnection(int sockfd, const InetAddress &peerAddr) {
   conn->setConnectionCallback(connectionCallback_);
   conn->setMessageCallback(messageCallback_);
   conn->setWriteCompleteCallback(writeCompleteCallback_);
+  conn->setIdleSeconds(idleSeconds_);
 
   // 设置了如何关闭连接的回调
   conn->setCloseCallback(
