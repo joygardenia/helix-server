@@ -12,6 +12,7 @@
 #include <EventLoop.h>
 #include <Logger.h>
 #include <Poller.h>
+#include <TimerQueue.h>
 #include <vector>
 
 thread_local EventLoop *t_loopInThisThread = nullptr;
@@ -29,6 +30,7 @@ int CreateEventfd() {
 EventLoop::EventLoop()
     : looping_(false), quit_(false), threadId_(CurrentThread::tid()),
       wakeupFd_(CreateEventfd()), poller_(Poller::newDefaultPoller(this)),
+      timerQueue_(new TimerQueue(this)),
       wakeupChannel_(new Channel(this, wakeupFd_)),
       callingPendingFunctors_(false) {
   LOG_DEBUG << "EventLoop created " << this << " in thread " << threadId_;

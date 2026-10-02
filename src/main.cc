@@ -3,7 +3,9 @@
 #include <sys/stat.h>
 
 #include "AsyncLogging.h"
+#include "ConsistentHash.h"
 #include "DBPool.h"
+#include "EtcdClient.h"
 #include "LFU.h"
 #include "Logger.h"
 #include "TcpServer.h"
@@ -15,6 +17,9 @@ static const off_t kRollSize = 1 * 1024 * 1024;
 static DBPool *g_dbPool = nullptr;
 // LFU：key=路由字符串, value=响应 body（读多写少的物品目录）
 static KamaCache::KLfuCache<std::string, std::string> *g_cache = nullptr;
+
+static EtcdClient *g_etcd = nullptr;
+static ConsistentHash *g_hashRing = nullptr;
 
 // ─── HTTP 工具 ───────────────────────────────────────────────────────────────
 static std::string httpResp(int code, const std::string &body,
@@ -58,7 +63,6 @@ static bool jsonGetInt(const std::string &json, const std::string &key,
   return true;
 }
 
-// 解析 "key":"value" 中的简单字符串（不做完整 JSON 转义处理，够用演示）
 static bool jsonGetString(const std::string &json, const std::string &key,
                           std::string &val) {
   std::string pat = "\"" + key + "\"";
@@ -77,27 +81,22 @@ static bool jsonGetString(const std::string &json, const std::string &key,
   val = json.substr(pos + 1, end - pos - 1);
   return !val.empty();
 }
-//  • 缓存粒度：缓存的是 整条接口响应 JSON，属于 response
-//  cache；改表后若不走失效逻辑，会读到旧目录（你当前只在别处按需失效，物品表若后台改需remove
-//  或 TTL）。 • 为何适合
-//  LFU：目录读多、行数少、全服共享，和「每用户一条」的数据相比更适合进程内缓存。
 
-// ─── GET /items
-// 物品目录（LFU）────────────────────────────────────────────────
 static std::string handleGetItems() {
-  // EchoServer::onMessage 里在 method == "GET" && path == "/items"
-  // 时调用它，所以缓存键用 "GET/items" 与路由一致。
   const std::string cacheKey = "GET/items";
   std::string cached;
   if (g_cache->get(cacheKey, cached))
     return httpResp(200, cached);
+
+  if (!g_dbPool)
+    return httpResp(500, "{\"error\":\"db pool not init\"}");
 
   auto db = g_dbPool->get();
   MYSQL_RES *res =
       db->query("SELECT id,name,description FROM item_defs ORDER BY id");
   if (!res)
     return httpResp(500, "{\"error\":\"db error\"}");
-  // 手拼 JSON 数组
+
   std::ostringstream body;
   body << "[";
   MYSQL_ROW row;
@@ -119,11 +118,13 @@ static std::string handleGetItems() {
   return httpResp(200, bodyStr);
 }
 
-// ─── POST /players 创建角色 body: {"name":"Alice"} ───────────────────────────
 static std::string handlePostPlayer(const std::string &body) {
   std::string name;
   if (!jsonGetString(body, "name", name))
     return httpResp(400, "{\"error\":\"invalid params, need name\"}");
+
+  if (!g_dbPool)
+    return httpResp(500, "{\"error\":\"db pool not init\"}");
 
   auto db = g_dbPool->get();
   if (!db->begin())
@@ -157,8 +158,10 @@ static std::string handlePostPlayer(const std::string &body) {
   return httpResp(200, resp.str());
 }
 
-// ─── GET /players/:id ────────────────────────────────────────────────────────
 static std::string handleGetPlayer(int player_id) {
+  if (!g_dbPool)
+    return httpResp(500, "{\"error\":\"db pool not init\"}");
+
   auto db = g_dbPool->get();
 
   std::ostringstream qp;
@@ -198,15 +201,27 @@ static std::string handleGetPlayer(int player_id) {
   return httpResp(200, body.str());
 }
 
-// ─── POST /inventory/use 消耗道具（事务 +
-// 行锁）─────────────────────────────── body:
-// {"player_id":1,"item_id":1,"qty":2}
+static std::string handleDiscover(const std::string &path) {
+  size_t pos = path.find("key=");
+  if (pos == std::string::npos)
+    return httpResp(400, "{\"error\":\"missing key\"}");
+  std::string key = path.substr(pos + 4);
+  if (g_hashRing) {
+    std::string node = g_hashRing->getNode(key);
+    return httpResp(200, "{\"key\":\"" + key + "\",\"node\":\"" + node + "\"}");
+  }
+  return httpResp(500, "{\"error\":\"hash ring not init\"}");
+}
+
 static std::string handlePostInventoryUse(const std::string &body) {
   int player_id = 0, item_id = 0, qty = 0;
   if (!jsonGetInt(body, "player_id", player_id) ||
       !jsonGetInt(body, "item_id", item_id) || !jsonGetInt(body, "qty", qty) ||
       qty <= 0)
     return httpResp(400, "{\"error\":\"invalid params\"}");
+
+  if (!g_dbPool)
+    return httpResp(500, "{\"error\":\"db pool not init\"}");
 
   auto db = g_dbPool->get();
   if (!db->begin())
@@ -258,7 +273,6 @@ static std::string handlePostInventoryUse(const std::string &body) {
   return httpResp(200, resp.str());
 }
 
-// ─── EchoServer ──────────────────────────────────────────────────────────────
 class EchoServer {
 public:
   EchoServer(EventLoop *loop, const InetAddress &addr, const std::string &name)
@@ -293,10 +307,17 @@ private:
       resp = handlePostPlayer(body);
     } else if (method == "GET" && path.size() > 9 &&
                path.substr(0, 9) == "/players/") {
-      int id = std::stoi(path.substr(9));
-      resp = handleGetPlayer(id);
+      try {
+        int id = std::stoi(path.substr(9));
+        resp = handleGetPlayer(id);
+      } catch (...) {
+        resp = httpResp(400, "{\"error\":\"invalid player id\"}");
+      }
     } else if (method == "POST" && path == "/inventory/use") {
       resp = handlePostInventoryUse(body);
+    } else if (method == "GET" && path.size() >= 9 &&
+               path.substr(0, 9) == "/discover") {
+      resp = handleDiscover(path);
     } else {
       resp = httpResp(404, "{\"error\":\"not found\"}");
     }
@@ -308,7 +329,6 @@ private:
   EventLoop *loop_;
 };
 
-// ─── 日志 ────────────────────────────────────────────────────────────────────
 AsyncLogging *g_asyncLog = nullptr;
 void asyncLog(const char *msg, int len) {
   if (g_asyncLog)
@@ -316,11 +336,24 @@ void asyncLog(const char *msg, int len) {
   fwrite(msg, 1, len, stdout);
 }
 
-// ─── main ────────────────────────────────────────────────────────────────────
 int main(int argc, char *argv[]) {
+  int port = 8080;
+  std::string nodeName = "node1";
+  std::string etcdHost = "127.0.0.1";
+  std::string dbHost = "127.0.0.1";
+
+  if (argc > 1)
+    nodeName = argv[1];
+  if (argc > 2)
+    port = std::stoi(argv[2]);
+  if (argc > 3)
+    etcdHost = argv[3];
+  if (argc > 4)
+    dbHost = argv[4];
+
   mkdir("logs", 0755);
   std::ostringstream logPath;
-  logPath << "logs/" << ::basename(argv[0]);
+  logPath << "logs/" << nodeName;
   AsyncLogging log(logPath.str(), kRollSize);
   g_asyncLog = &log;
   Logger::setOutput(asyncLog);
@@ -331,16 +364,52 @@ int main(int argc, char *argv[]) {
   KamaCache::KLfuCache<std::string, std::string> lfu(128);
   g_cache = &lfu;
 
-  // 默认连接 game_db；账号密码与 db/init.sql 中 GRANT 一致
-  DBPool dbPool("127.0.0.1", "takeaway", "takeaway123", "game_db", 3306, 8);
-  g_dbPool = &dbPool;
+  ConsistentHash hashRing(100);
+  hashRing.addNode("node1");
+  hashRing.addNode("node2");
+  hashRing.addNode("node3");
+  g_hashRing = &hashRing;
 
   EventLoop loop;
-  InetAddress addr(8080);
+
+  EtcdClient etcd(etcdHost, 2379);
+  g_etcd = &etcd;
+  bool etcdOk = etcd.registerService("/game/" + nodeName,
+                                     "127.0.0.1:" + std::to_string(port), 10);
+  if (etcdOk) {
+    LOG_INFO << "Service registered to etcd: /game/" << nodeName;
+  } else {
+    LOG_ERROR << "Etcd registration failed";
+  }
+
+  try {
+    g_dbPool = new DBPool(dbHost.c_str(), "takeaway", "takeaway123", "game_db",
+                          3306, 8);
+    LOG_INFO << "DBPool initialized successfully";
+  } catch (const std::exception &e) {
+    LOG_ERROR << "DBPool init failed: " << e.what();
+    g_dbPool = nullptr;
+  }
+
+  if (etcdOk) {
+    LOG_INFO << "Starting etcd keepalive timer...";
+    EtcdClient *etcdPtr = g_etcd;
+    loop.runEvery(5.0, [etcdPtr]() {
+      if (etcdPtr) {
+        etcdPtr->keepAlive();
+      }
+    });
+  }
+
+  LOG_INFO << "Starting TcpServer on port: " << port;
+  // InetAddress 构造函数参数顺序是 (port, ip)
+  InetAddress addr(port, "0.0.0.0");
   EchoServer server(&loop, addr, "GameServer");
   server.start();
 
-  std::cout << "=== Game HTTP Server on :8080 (db=game_db) ===" << std::endl;
+  LOG_INFO << "=== Game HTTP Server [" << nodeName << "] on :" << port
+           << " (db=game_db) ===";
+
   loop.loop();
   log.stop();
 }

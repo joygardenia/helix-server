@@ -133,22 +133,18 @@ void TcpConnection::send(const std::string &buf) {
   }
 }
 void TcpConnection::sendInLoop(const void *data, size_t count) {
-  // LOG_INFO << "sendInLoop start";
+  if (state_ == kDisconnected) {
+    LOG_ERROR << "disconnected, give up writing!";
+    return;
+  }
+
   ssize_t nwrote = 0;
   size_t remaining = count;
   bool faultError = false;
-  if (state_ == kDisconnected) {
-    LOG_ERROR << "disconnected , give up writing!";
-  }
-  //! outputBuffer_ 是**发送缓冲区**，只在内核 TCP
-  //! 缓冲区满、一次写不完时才用到，正常情况下数据直接发出去，不经过它。
-  if (!channel_->isWriting() &&
-      outputBuffer_.readableBytes() ==
-          0) { // Buffer里面没有数据可以直接写,如果有上次残留的数据则只能写入buffer,否则数据顺序会乱
-    // LOG_INFO << "sendInLoop first";
-    // LOG_INFO << "sendInLoop len=" << count;
+
+  // 如果当前 channel 没有在写，且发送缓冲区为空，尝试直接 write
+  if (!channel_->isWriting() && outputBuffer_.readableBytes() == 0) {
     nwrote = ::write(channel_->fd(), data, count);
-    LOG_INFO << "write returned nwrote=" << nwrote << " errno=" << errno;
     if (nwrote >= 0) {
       remaining -= nwrote;
       if (remaining == 0 && writeCompleteCallback_) {
@@ -165,24 +161,18 @@ void TcpConnection::sendInLoop(const void *data, size_t count) {
       }
     }
   }
-  // 1.write没写完  2.outputBuffer_数据残留，这次数据只能append进buffer
+
+  // 如果一次没写完，或者发生了致命错误，将剩余数据放入缓冲区（或放弃）
   if (!faultError && remaining > 0) {
-    // LOG_INFO << "sendInLoop second";
     size_t oldLen = outputBuffer_.readableBytes();
-    // TODO
-    // "oldLen<highWaterMark_"只在缓冲区从低水位越过高水位的那一刻触发一次，不重复触发.否则每次send
-    // 都会触发回调，用户被反复通知"快满了"
     if (oldLen + remaining > highWaterMark_ && oldLen < highWaterMark_ &&
         highWaterMarkCallback_) {
       loop_->queueInLoop(std::bind(highWaterMarkCallback_, shared_from_this(),
                                    oldLen + remaining));
     }
     outputBuffer_.append((char *)data + nwrote, remaining);
-    // epoll 检测到 fd 可写 → handleWrite()
-    LOG_INFO << "before enableWriting: isWriting=" << channel_->isWriting();
     if (!channel_->isWriting()) {
       channel_->enableWriting();
-      LOG_INFO << "enableWriting!";
     }
   }
 }
