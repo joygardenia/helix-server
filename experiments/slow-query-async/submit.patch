@@ -1,0 +1,25 @@
+--- a/src/ThreadPool.cc	2026-10-04 12:14:26.561492895 +0800
++++ b/src/ThreadPool.cc	2026-10-04 14:25:32.125025848 +0800
+@@ -31,20 +31,8 @@
+ }
+ 
+ bool ThreadPool::submit(Task task) {
+-  if (!running_.load()) {
+-    LOG_ERROR << "ThreadPool::submit rejected: pool not running";
+-    return false;
+-  }
+-  {
+-    std::unique_lock<std::mutex> lock(mutex_);
+-    if (queue_.size() >= maxQueueSize_) {
+-      LOG_ERROR << "ThreadPool::submit rejected: queue full ("
+-                << queue_.size() << "/" << maxQueueSize_ << ")";
+-      return false;
+-    }
+-    queue_.push(std::move(task));
+-  }
+-  notEmpty_.notify_one();
++  // SYNC-CONTROL BUILD: execute inline on the calling (IO) thread.
++  task();
+   return true;
+ }
+ 

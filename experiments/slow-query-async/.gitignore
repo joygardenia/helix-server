@@ -1,0 +1,4 @@
+# 对照源码副本与构建产物不入库；保留 README 与脚本
+syncbuild/
+*.log
+*.out
