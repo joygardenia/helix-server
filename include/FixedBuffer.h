@@ -2,7 +2,7 @@
 #include "noncopyable.h"
 #include <string.h>
 #include <string>
-class AsynbLogging;
+class AsyncLogging;
 const int kSmallBufferSize = 4000;
 const int kLargeBufferSize = 4000 * 1000;
 template <int buffer_size> class FixedBuffer : noncopyable {
@@ -10,7 +10,8 @@ public:
   FixedBuffer() : size_(0), cur_(data_) {}
   void append(const char *value, size_t len) {
     if (len <= avail()) {
-      strncpy(cur_, value, len);
+      // strncpy(cur_, value, len);
+      memcpy(cur_, value, len);
       add(len);
     }
   }

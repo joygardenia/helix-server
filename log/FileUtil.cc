@@ -25,7 +25,7 @@ void FileUtil::append(const char *data, size_t len) {
     }
     written += n;
   }
-  writtenBytes_ += len; // TODO : written->len
+  writtenBytes_ += written; // TODO : written->len
 }
 void FileUtil::flush() { ::fflush(file_); }
 // off_t FileUtil::writtenBytes() const { return writtenBytes_; }
