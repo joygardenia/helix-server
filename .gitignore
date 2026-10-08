@@ -1,0 +1,38 @@
+# 构建产物
+build/
+bin/
+lib/
+logs/
+*.o
+*.so
+*.a
+a.out
+compile_commands.json
+
+# 实验目录内的嵌套构建/快照
+**/build/
+**/bin/
+**/lib/
+**/logs/
+experiments/*/syncbuild/
+
+# 编辑器 / 工具
+.cache/
+.vscode/
+.codegraph/
+.omo/
+.opencode/
+
+# 个人文件（不进入公开仓库）
+AGENTS.md
+opencode.jsonc
+PROGRESS.md
+QA_NOTES.md
+weak_points.md
+review.md
+review_guide.md
+review_guide_layered.md
+special_points.md
+网络模块复习-问答批改.md
+简历.txt
+招聘JD/
