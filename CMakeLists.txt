@@ -7,6 +7,8 @@ project(kama-webserver)
 set (CMAKE_CXX_STANDARD 11)
 set (CMAKE_CXX_STANDARD_REQUIRED True)
 
+enable_testing()
+
 #设置头文件目录，供所有子项目使用
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
@@ -23,3 +25,9 @@ set(LIBS
 add_subdirectory(src)
 add_subdirectory(memory)
 add_subdirectory(log)
+
+# ping-pong 压测（-DBUILD_BENCH=OFF 可关闭）
+option(BUILD_BENCH "Build ping-pong benchmark" ON)
+if(BUILD_BENCH)
+  add_subdirectory(bench)
+endif()
