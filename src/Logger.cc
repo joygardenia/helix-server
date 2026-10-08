@@ -1,5 +1,6 @@
 #include "Logger.h"
 #include "CurrentThread.h"
+#include <stdlib.h>
 
 namespace ThreadInfo
 {
@@ -8,6 +9,34 @@ namespace ThreadInfo
     thread_local time_t t_lastSecond;  // 每个线程记录上次格式化的时间
 
 }
+
+static Logger::LogLevel initLogLevel()
+{
+    if (::getenv("MUDUO_LOG_TRACE"))
+        return Logger::TRACE;
+    if (::getenv("MUDUO_LOG_DEBUG"))
+        return Logger::DEBUG;
+    const char *level = ::getenv("LOG_LEVEL");
+    if (level)
+    {
+        if (strcmp(level, "TRACE") == 0)
+            return Logger::TRACE;
+        if (strcmp(level, "DEBUG") == 0)
+            return Logger::DEBUG;
+        if (strcmp(level, "INFO") == 0)
+            return Logger::INFO;
+        if (strcmp(level, "WARN") == 0)
+            return Logger::WARN;
+        if (strcmp(level, "ERROR") == 0)
+            return Logger::ERROR;
+        if (strcmp(level, "FATAL") == 0)
+            return Logger::FATAL;
+    }
+    return Logger::WARN;
+}
+
+Logger::LogLevel g_logLevel = initLogLevel();
+
 const char *getErrnoMsg(int savedErrno)
 {
     return strerror_r(savedErrno, ThreadInfo::t_errnobuf, sizeof(ThreadInfo::t_errnobuf));
@@ -95,6 +124,11 @@ void Logger::Impl::finish()
 Logger::Logger(const char *filename, int line, LogLevel level) : impl_(level, 0, filename, line)
 {
 }
+Logger::Logger(const char *filename, int line, LogLevel level, const char *func)
+    : impl_(level, 0, filename, line)
+{
+    impl_.stream_ << func << ' ';
+}
 Logger::~Logger()
 {
     impl_.finish();
@@ -117,4 +151,9 @@ void Logger::setOutput(OutputFunc out)
 void Logger::setFlush(FlushFunc flush)
 {
     g_flush = flush;
+}
+
+void Logger::setLogLevel(Logger::LogLevel level)
+{
+    g_logLevel = level;
 }

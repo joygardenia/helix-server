@@ -33,12 +33,15 @@ class Logger {
 public:
   enum LogLevel { TRACE, DEBUG, INFO, WARN, ERROR, FATAL, LEVEL_COUNT };
   Logger(const char *filename, int line, LogLevel level);
+  Logger(const char *filename, int line, LogLevel level, const char *func);
   ~Logger();
   LogStream &stream() { return impl_.stream_; }
   using OutputFunc = std::function<void(const char *msg, int len)>;
   using FlushFunc = std::function<void()>;
   static void setOutput(OutputFunc);
   static void setFlush(FlushFunc);
+  static LogLevel logLevel();
+  static void setLogLevel(LogLevel level);
 
 private:
   class Impl {
@@ -57,6 +60,11 @@ private:
 private:
   Impl impl_;
 };
+
+extern Logger::LogLevel g_logLevel;
+
+inline Logger::LogLevel Logger::logLevel() { return g_logLevel; }
+
 const char *getErrnoMsg(int savedErrno);
 
 /**
@@ -64,11 +72,23 @@ const char *getErrnoMsg(int savedErrno);
  * 比如设置等级为FATAL，则logLevel等级大于DEBUG和INFO，DEBUG和INFO等级的日志就不会输出
  */
 #ifdef OPEN_LOGGING
-#define LOG_DEBUG Logger(__FILE__, __LINE__, Logger::DEBUG).stream()
-#define LOG_INFO Logger(__FILE__, __LINE__, Logger::INFO).stream()
+#define LOG_TRACE                                                              \
+  if (Logger::logLevel() <= Logger::TRACE)                                     \
+  Logger(__FILE__, __LINE__, Logger::TRACE, __func__).stream()
+#define LOG_DEBUG                                                              \
+  if (Logger::logLevel() <= Logger::DEBUG)                                     \
+  Logger(__FILE__, __LINE__, Logger::DEBUG, __func__).stream()
+#define LOG_INFO                                                               \
+  if (Logger::logLevel() <= Logger::INFO)                                      \
+  Logger(__FILE__, __LINE__, Logger::INFO).stream()
 #define LOG_WARN Logger(__FILE__, __LINE__, Logger::WARN).stream()
 #define LOG_ERROR Logger(__FILE__, __LINE__, Logger::ERROR).stream()
 #define LOG_FATAL Logger(__FILE__, __LINE__, Logger::FATAL).stream()
 #else
-#define LOG(level) LogStream()
+#define LOG_TRACE LogStream()
+#define LOG_DEBUG LogStream()
+#define LOG_INFO LogStream()
+#define LOG_WARN LogStream()
+#define LOG_ERROR LogStream()
+#define LOG_FATAL LogStream()
 #endif
