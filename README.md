@@ -1,122 +1,146 @@
-# C++项目推荐：kama-webserver | 代码随想录
+# Helix
 
-**本项目目前只在[知识星球](https://programmercarl.com/other/kstar.html)里维护，并答疑**
+**高性能 C++ HTTP 服务器**：epoll / io_uring 双后端 Reactor · 业务线程池异步化 · 分片 LFU 缓存 · etcd 服务发现
 
-最近[知识星球](https://programmercarl.com/other/kstar.html)里的项目开启翻新计划，为了应变每年校招求职的变化，很多星球老项目都重构代码并重写项目文档了。
+Helix 是一个从零实现的 muduo 风格网络服务器，面向高并发请求场景。它在自研 Reactor 网络库之上，接入 HTTP 协议解析、数据库连接池、缓存与服务治理，并通过压测量化每一处优化。
 
-这期给大家重构的项目是 23年在[知识星球](https://programmercarl.com/other/kstar.html)里发布的webserver项目。
+## 特性
 
-## 老生常淡，webserver还能做吗？
+- **Multi-Reactor 并发模型**：`one loop per thread`，main Reactor 负责 `accept`，N 个 sub Reactor 负责连接读写；跨线程任务经 `runInLoop/queueInLoop + eventfd` 唤醒投递。
+- **I/O 多路复用双后端**：抽象 `Poller` 接口，提供 `EPollPoller` 与 `IoUringPoller`（`IORING_POLL_ADD_MULTI`），通过环境变量 `USE_IOURING` 切换。
+- **增量式 HTTP/1.1 解析**：`HttpContext` 状态机（请求行 → 头部 → 请求体），正确处理半包、粘包、`Content-Length` 边界与顺序 keep-alive；路由支持精确与前缀匹配。
+- **业务线程池异步化**：所有阻塞业务（数据库、缓存）下沉到有界业务线程池，完成后经 `EventLoop::runInLoop` 回投连接所属 IO 线程发送；队列满时返回 503 背压。
+- **连接生命周期管理**：`timerfd + std::set` 实现 O(logN) 定时器；每连接 `runAfter` 空闲定时器 + 活跃刷新，超时统一回收；`Channel` 以 `weak_ptr tie` 绑定连接对象，回调期间提升为 `shared_ptr` 防止 use-after-free。
+- **数据库**：MySQL 连接池，RAII 自动归还、事务 `begin/commit/rollback`、`SELECT ... FOR UPDATE` 行锁防超卖、参数转义防 SQL 注入。
+- **缓存**：LFU 分片缓存（`KHashLfuCache`），命中直接返回、跳过数据库。
+- **服务治理**：etcd 服务注册与发现（租约 + `keepAlive` 心跳），配合一致性哈希（虚拟节点）做请求路由。
+- **异步日志**：`AsyncLogging` 前端/后端双缓冲交换 + `LogFile` 1MB 定长滚动。
+- **可观测**：log2 分桶延迟直方图，`/stats` 输出 P50/P75/P90/P99。
 
-关于C++的项目，大家都会知道 webserver。
+## 架构
 
-有一个段子：C++选手人均webserver。
+```mermaid
+flowchart TB
+    C[客户端] -->|TCP| ACC[Acceptor / main Reactor]
+    ACC -->|new connection| P[EventLoopThreadPool]
+    P --> S1[sub Reactor 1]
+    P --> S2[sub Reactor 2]
+    P --> S3[sub Reactor N]
 
-我得给webserver“伸冤”一下，其实**webserver是一个非常好的学习项目，只是这个项目的形式“烂大街”了**，它所涉及的知识依然是经典的。
+    subgraph IO 线程
+      S1 --> CH[Channel] --> PL[Poller: epoll / io_uring]
+      CH --> TC[TcpConnection] --> BUF[Buffer]
+      BUF --> HC[HttpContext 增量解析]
+    end
 
-webserver 所涉及到的知识：
+    HC -->|完整请求| BP[业务线程池]
+    subgraph 业务线程
+      BP --> RT[Router] --> HD[Handler]
+      HD --> DB[(MySQL 连接池)]
+      HD --> LFU[LFU 分片缓存]
+      HD --> RING[一致性哈希]
+    end
+    BP -->|runInLoop 回投| TC
 
-* C++八股（C/C++语法全覆盖、内存管理等、可以扩展至C++11/17）
-* 操作系统（线程、进程、锁、还有大量的 I/O 系统调用及其封装还有 EPOLL 等多路复用机制）
-* 网络（网络编程，通信，网络异常的处理）
-* 数据库（注册中心的数据库语句、负载均衡等）
-* 还有设计模式、缓存设计，日志系统，定时器模块等等
+    ETCD[(etcd 注册/发现)] -.-> HD
+```
 
-**大家背的八股，无非就是 网络，操作系统和数据库，还有C++八股，webserver基本都包含了**，**webserver是八股结合实战非常好的案例**！
+## 性能
 
-可以理解成：**webserver 就是大家背的八股的实战篇**。
+本机回环压测（`i5-13500H`，12 物理核 / 16 线程，内核 6.12，Manjaro），请求路径为固定响应以排除 DB/磁盘干扰：
 
-webserver 也可以称之为高性能服务器，因为他算是服务器开发，不少录友在简历上不写webserver这个名字，而写的是高性能服务器。
+| 并发 | QPS | 说明 |
+|------|-----|------|
+| 100  | ≈265k | 并发 100→1000 QPS 波动 < 6% |
+| 500  | ≈268k | |
+| 1000 | ≈245k~269k | 长尾明显，P50 ≈ 3.9ms（wrk2） |
 
-换一个名字好像高级了一些。。。
+- **服务端埋点**：请求处理耗时 P50 4µs / P99 16µs（仅统计业务处理段）。
+- **epoll vs io_uring**：`POLL_ADD_MULTI` 模式下高并发（c1000）QPS 低于 epoll 约 12%~17%，但平均延迟更平稳；`POLL_ADD` 仍是事件通知而非真正的异步读写。
+- **内存池实验**：连接级与请求级小对象接入内存池均无显著收益（glibc tcache 已近零成本 + 全局锁竞争），量化后回退 —— 结论见 `benchmark.md`。
 
-如果你时间充裕，想系统学习C++，做webserver是非常好的选择，你会发现自己背的八股都活学活用了。
+> 历史环境（旧机器）基线约 8.4 万 QPS，与当前数据不具跨环境可比性。
 
-当然，简历上一个webserver 是不够的，还需要再做一个项目。 [知识星球](https://programmercarl.com/other/kstar.html)里有众多项目可以选：
+## 快速开始
 
-如果你时间紧张，那就别做webserver了，本来形式就是“烂大街”的。
+### 依赖
 
-webserver是用来打基础的，也没时间打基础，就把相关八股背一背，突击做一些新颖一些的项目。[知识星球](https://programmercarl.com/other/kstar.html)里目前有10个C++的项目可以选择。
+- CMake ≥ 3.5、支持 C++11 的编译器（g++/clang++）
+- `liburing`（io_uring 后端）
+- `libmariadb` / `libmysqlclient`（数据库）
+- MariaDB/MySQL 服务、`etcd`、`curl`（etcd REST 调用）
+- 可选：`wrk` / `wrk2`（压测）
 
-## 高性能服务器项目第二版
+### 构建
 
+```bash
+cmake -S . -B build
+cmake --build build -j
+```
 
-文档方面，相对与[第一版](https://mp.weixin.qq.com/s/40ISnd7PkBtAlWv5MQf1vQ) 做了如下优化：
+`-DBUILD_BENCH=OFF` 可关闭 ping-pong 压测程序。
 
-1、开篇：讲述了为什么要学习webserver，以及学习webserver需要什么基础知识。
+### 初始化数据库
 
-2、大纲：讲述了整个文章的框架结构。
+```bash
+mysql -u root -p < db/init.sql
+```
 
-3、框架梳理：讲述了webserver整体的架构如网络模块、定时器模块、内存池、LFU、日志系统等。
+### 运行
 
-4、代码模块：讲述了上面提到模块以及内存池、LFU的核心代码部分。
+```bash
+./bin/main <节点名> <端口> [etcd主机] [数据库主机]
+# 例：
+./bin/main node1 8080 127.0.0.1 127.0.0.1
+```
 
-5、面试问题：整理了星球录友亲身经历的问题
+切换 io_uring 后端：
 
-6、补充简历写法。
+```bash
+USE_IOURING=1 ./bin/main node1 8080
+```
 
-## 高性能服务器专栏
+### 测试
 
-该项目的专栏是[知识星球](https://programmercarl.com/other/kstar.html)录友专享的。
+```bash
+cd build && ctest --output-on-failure
+```
 
-项目专栏依然是将 「简历写法」给大家列出来了，大家学完就可以参考这个来写简历：
+包含 HTTP 解析单测、线程池单测与回环集成测试。
 
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250307105143.png' width=500 alt=''></img></div>
+## HTTP 接口
 
-做完该项目，面试中大概率会有哪些面试问题，以及如何回答，也列出好了：
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET  | `/items` | 物品目录（命中 LFU 缓存则跳过 DB） |
+| POST | `/players` | 创建角色（事务：写入角色 + 初始背包） |
+| GET  | `/players/{id}` | 查询角色及其背包 |
+| POST | `/inventory/use` | 使用道具（`FOR UPDATE` 行锁 + 审计日志） |
+| GET  | `/discover?key=xxx` | 一致性哈希路由，返回目标节点 |
+| GET  | `/stats` | 延迟直方图（P50/P75/P90/P99） |
 
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250307105324.png' width=500 alt=''></img></div>
+## 目录结构
 
-专栏中的项目面试题都掌握的话，这个项目在面试中基本没问题。
+```
+include/            头文件（网络库、日志、缓存、HTTP、线程池等）
+src/                网络库与服务器实现
+  http/             增量 HTTP 解析与路由
+  http_tests/       单元与回环集成测试
+log/                异步日志实现
+memory/             定长内存池
+bench/              ping-pong 压测客户端/服务端
+scripts/            集群压测脚本
+db/init.sql         数据库初始化
+openspec/           设计变更提案与规格
+```
 
-很多录友在做项目的时候，把项目运行起来 就是第一大难点！
+## 说明与限制
 
-本项目运行起来 需要依赖的环境很多，所以我给大家准备的 自动化环境配置脚本， **项目运行环境，一键配置！ 不需要大家去处理环境问题了**：
+- 仅支持 `Content-Length` 界定的请求体，暂不支持 `Transfer-Encoding: chunked`。
+- `io_uring` 当前为事件通知模式（`POLL_ADD`），尚未改造为 `IORING_OP_RECV/SEND` 的真正异步读写。
+- `/stats` 统计的是业务处理段耗时，非端到端延迟。
+- 数据库、etcd 地址与演示凭据为本地开发默认值，生产环境请改为配置注入。
 
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250307105632.png' width=500 alt=''></img></div>
+## License
 
-
-框架梳理：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250307105726.png' width=500 alt=''></img></div>
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250307105931.png' width=500 alt=''></img></div>
-
-底层网络模块架构：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250307105758.png' width=500 alt=''></img></div>
-
-代码讲解：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250307110003.png' width=500 alt=''></img></div>
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250307110035.png' width=500 alt=''></img></div>
-
-日志系统的设计：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250307110057.png' width=500 alt=''></img></div>
-
-缓冲区的设计：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250307110130.png' width=500 alt=''></img></div>
-
-内存管理设计：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250307110205.png' width=500 alt=''></img></div>
-
-线程池：
-
-<div align="center"><img src='https://file1.kamacoder.com/i/algo/20250307110234.png' width=500 alt=''></img></div>
-
-## 答疑
-
-本项目在[知识星球](https://programmercarl.com/other/kstar.html)里为 文字专栏形式，大家不用担心，看不懂，星球里每个项目有专属答疑群，任何问题都可以在群里问，都会得到解答：
-
-![](https://file1.kamacoder.com/i/web/2025-09-26_11-30-13.jpg)
-
-
-
-## 下载方式
-
-**本文档仅为星球内部专享，大家可以加入[知识星球](https://programmercarl.com/other/kstar.html)里获取，在星球置顶一**
-
+GPL-3.0（见 [LICENSE](LICENSE)）。
